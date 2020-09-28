@@ -3,7 +3,8 @@ __all__ = [
     'Certificate',
     'CertAuthInternal',
     'CertFormat',
-    'CertType'
+    'CertType',
+    'serialization'
 ]
 
 import base64
@@ -233,17 +234,24 @@ class Certificate(object):
     @property
     def private_key(self):
         """Return bytes of the private key used to sign the certificate"""
-        try:
-            with open(self.files['private'], 'rb') as f:
-                return\
-                    serialization.load_pem_private_key(
-                        f.read(),
-                        password=self.rootca_password,
-                        backend=default_backend()
-                    )
-        except:
+        if self.private_key_bytes is None:
             return None
 
+        return\
+            serialization.load_pem_private_key(
+                self.private_key_bytes,
+                password=None,
+                backend=default_backend()
+            )
+
+    @property
+    def private_key_bytes(self):
+        """Return bytes of private key"""
+        try:
+            with open(self.files['private'], 'rb') as f:
+                return f.read()
+        except:
+            return None
 
 class CertAuthBase(object):
 
@@ -464,10 +472,10 @@ class CertAuthInternal(CertAuthBase):
         if cert.is_valid is True:
             if cert_type==CertType.SERVER and cert.certificate_svr:
                 print(f"Not refreshing server trust [{cert.certificate_svr.subject.rfc4514_string()}]")
-                return
+                return cert
             if cert_type==CertType.CLIENT and cert.certificate_usr:
                 print(f"Not refreshing client trust [{cert.certificate_usr.subject.rfc4514_string()}]")
-                return
+                return cert
 
         csr = cert.create_csr(cert_type)
 
@@ -491,7 +499,7 @@ class CertAuthInternal(CertAuthBase):
         with open(os.open(cert.files[cert_type.filekey], os.O_CREAT|os.O_WRONLY, 0o600), 'wb') as f:
             f.write(signed_cert.public_bytes(serialization.Encoding.PEM))
 
-        return signed_cert
+        return cert
 
     def _issue_ssh_certificate(self,
                                subject,
