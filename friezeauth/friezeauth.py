@@ -35,7 +35,14 @@ class CertType(enum.Enum):
     CERTAUTH  = 'certauth'
     SERVER    = 'server'
     CLIENT    = 'client'
-    USER      = 'user'
+
+    @property
+    def filekey(self):
+        return {
+            self.CERTAUTH : 'ca_pub.crt',
+            self.SERVER   : 'chain_svr',
+            self.CLIENT   : 'chain_usr',
+        }[self]
 
 
 class TrustType(enum.Enum):
@@ -62,19 +69,31 @@ class Certificate(object):
         self.csr = None
 
     @property
-    def certificate(self):
-        """Return a pyca/cryptography object representing an issued certificate"""
+    def certificate_svr(self):
+        """
+        Return a pyca/cryptography object representing an issued server certificate
+        for this host group
+        """
         try:
-            with open(self.files['chain'], 'rb') as f:
+            with open(self.files[CertType.SERVER.filekey], 'rb') as f:
+                return x509.load_pem_x509_certificate(f.read(), default_backend())
+        except:
+            return None
+
+    @property
+    def certificate_usr(self):
+        """
+        Return a pyca/cryptography object representing an issued user certificate
+        for this host group
+        """
+        try:
+            with open(self.files[CertType.CLIENT.filekey], 'rb') as f:
                 return x509.load_pem_x509_certificate(f.read(), default_backend())
         except:
             return None
 
     def create_csr(self, cert_type, random_alt_subject=False, force=False):
         """Use pyca/cryptography to create CSR object"""
-        if not force and self.is_valid:
-            print("This certificate is already issued and valid, not issuing CSR")
-            return
 
         # Generate a private key and store it
         subject_key =\
@@ -171,7 +190,8 @@ class Certificate(object):
     @property
     def files(self):
         return {
-            'chain'   : os.path.join(self.path(), 'chain.crt'),
+            'chain_svr' : os.path.join(self.path(), 'chain_svr.crt'),
+            'chain_usr' : os.path.join(self.path(), 'chain_usr.crt'),
             'private' : os.path.join(self.path(), 'private.pem'),
         }
 
@@ -182,18 +202,26 @@ class Certificate(object):
     @property
     def is_valid(self):
         # Validate path,
+        cert_svr_exists = os.path.exists(self.files[CertType.SERVER.filekey])
+        cert_usr_exists = os.path.exists(self.files[CertType.CLIENT.filekey])
         file_structure_ok = (
-            os.path.exists(self.files['chain'])
-            and os.path.exists(self.files['private'])
+            os.path.exists(self.files['private'])
+            and ( cert_svr_exists or cert_usr_exists )
         )
 
         if file_structure_ok  is False:
             return False
 
-        cert = self.certificate
         current_time = dt.datetime.utcnow()
 
-        return current_time>=cert.not_valid_before and current_time<cert.not_valid_after
+        rv = False
+        if cert_svr_exists is True:
+            rv = self.certificate_svr.not_valid_before < current_time < self.certificate_svr.not_valid_after
+
+        if cert_usr_exists is True:
+            rv = self.certificate_usr.not_valid_before < current_time < self.certificate_usr.not_valid_after
+
+        return rv
 
     def path(self, rootdir=None):
         # The same certificate *may* map to multiple aliases. We need a way to reproducibly
@@ -232,7 +260,7 @@ class CertAuthBase(object):
 
         os.chmod(self.rootdir, 0o700)
 
-    def issue_certificate(self, *args, cert_format=CertFormat.SSH, **kwargs):
+    def issue_certificate(self, *args, cert_format=CertFormat.PEM, **kwargs):
         """By default, return SSH formatted certificates."""
         return {
             CertFormat.SSH : self._issue_ssh_certificate,
@@ -416,8 +444,12 @@ class CertAuthInternal(CertAuthBase):
 
         cert = Certificate(self, subject)
         if cert.is_valid is True:
-            print(f"Not refreshing cert trust [{cert.chain.subject.rfc4514_string()}]")
-            return
+            if cert_type==CertType.SERVER and cert.certificate_svr:
+                print(f"Not refreshing server trust [{cert.certificate_svr.subject.rfc4514_string()}]")
+                return
+            if cert_type==CertType.CLIENT and cert.certificate_usr:
+                print(f"Not refreshing client trust [{cert.certificate_usr.subject.rfc4514_string()}]")
+                return
 
         csr = cert.create_csr(cert_type)
 
@@ -438,12 +470,20 @@ class CertAuthInternal(CertAuthBase):
 
         # Sign certificate and push it to storage
         signed_cert = signable.sign(self.private_key, hashes.SHA256(), default_backend())
-        with open(os.open(cert.files['chain'], os.O_CREAT|os.O_WRONLY, 0o600), 'wb') as f:
+        with open(os.open(cert.files[cert_type.filekey], os.O_CREAT|os.O_WRONLY, 0o600), 'wb') as f:
             f.write(signed_cert.public_bytes(serialization.Encoding.PEM))
 
         return signed_cert
 
-    def _issue_ssh_certificate(self, subject, cert_type, command=None, remote_user='root', user_ip=None, validity_length=300, valid_src_ips=None, serialize_to_dir=None):
+    def _issue_ssh_certificate(self,
+                               subject,
+                               cert_type,
+                               command=None,
+                               remote_user='root',
+                               user_ip=None,
+                               validity_length=300,
+                               valid_src_ips=None,
+                               serialize_to_dir=None):
         raise NotImplementedError("No implementation yet, take a look at frieze for bless-ng-based implementation")
 
     @property
