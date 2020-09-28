@@ -355,7 +355,25 @@ class CertAuthInternal(CertAuthBase):
                     .public_key(csr.public_key())\
                     .serial_number(x509.random_serial_number())\
                     .not_valid_before(newca_valid_from)\
-                    .not_valid_after(newca_valid_until)
+                    .not_valid_after(newca_valid_until)\
+                    .add_extension(
+                        x509.BasicConstraints(
+                            True,       # Can issue certificates
+                            0,          # Cannot sign further CA certs
+                        ), critical=True
+                    ).add_extension(
+                        x509.KeyUsage(
+                            True,       # digital signature
+                            False,      # content commitment/non repudiation
+                            False,      # key encipherment
+                            False,      # data encipherment
+                            False,      # key aggreement
+                            True,       # key cert sign
+                            True,       # crl sign
+                            False,      # encipher only
+                            False,      # decipher only
+                        ), critical=True
+                    )
         else:
 
             # Self signed
