@@ -323,7 +323,7 @@ class CertAuthInternal(CertAuthBase):
                 x509.NameAttribute(NameOID.ORGANIZATION_NAME, self.config['org']),
                 x509.NameAttribute(NameOID.ORGANIZATIONAL_UNIT_NAME, self.config['org_unit']),
                 x509.NameAttribute(NameOID.EMAIL_ADDRESS, self.config['contact']),
-                x509.NameAttribute(NameOID.COMMON_NAME, "%s Certificate Authority" % self.config['org']),
+                x509.NameAttribute(NameOID.COMMON_NAME, f"{self.config['org']} {'Intermediate' if self.is_intermediate_ca else ''} CA"),
             ])
 
         # Valid from
